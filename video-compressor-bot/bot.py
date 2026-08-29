@@ -4,14 +4,14 @@ import time
 import subprocess
 import logging
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import Message
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("VideoCompressor")
 
-BOT_TOKEN = os.getenv("COMPRESSOR_BOT_TOKEN", "8491783785:AAH02Aj6dckq1yk9NYtt1yJ7_TBibi_hrBE")
-API_ID = int(os.getenv("TELEGRAM_API_ID", "28373801"))
-API_HASH = os.getenv("TELEGRAM_API_HASH", "9dd3f0e8f22fa97d8b5e91eb705886d4")
+BOT_TOKEN = os.getenv("COMPRESSOR_BOT_TOKEN", "8815124197:AAE6zG_54LOh5ja-DxlrGFF8-2cQplEQ5fA")
+API_ID = int(os.getenv("TELEGRAM_API_ID", "33864339"))
+API_HASH = os.getenv("TELEGRAM_API_HASH", "7a12002bdba42778b2068c88bb64072c")
 ADMIN_IDS = [5415350162, 6149114216]
 
 TEMP_DIR = "/tmp/hikaku_compress"
@@ -33,16 +33,12 @@ def human_size(size_bytes: int) -> str:
         i += 1
     return f"{p:.2f} {size_name[i]}"
 
-async def compress_video_ffmpeg(input_path: str, output_path: str, crf: int = 23) -> bool:
-    """
-    Sifatni saqlagan holda yuqori unumdorlikda videoni siqadi.
-    libx264 + CRF 23 + AAC + faststart
-    """
+async def compress_video_ffmpeg(input_path: str, output_path: str, crf: int = 24) -> bool:
     cmd = [
         "ffmpeg", "-y", "-i", input_path,
         "-c:v", "libx264",
         "-crf", str(crf),
-        "-preset", "faster",
+        "-preset", "veryfast",
         "-c:a", "aac",
         "-b:a", "128k",
         "-movflags", "+faststart",
@@ -57,7 +53,7 @@ async def compress_video_ffmpeg(input_path: str, output_path: str, crf: int = 23
     stdout, stderr = await proc.communicate()
     return proc.returncode == 0
 
-@app.on_message(filters.command("start") & filters.private)
+@app.on_message(filters.command("start"))
 async def start_cmd(client: Client, message: Message):
     if not is_admin(message.from_user.id):
         await message.reply_text("⛔️ Ushbu bot faqat Hikaku administratorlari uchun!")
@@ -67,11 +63,11 @@ async def start_cmd(client: Client, message: Message):
         "🗜️ <b>Hikaku Smart Video Compressor Bot</b>\n\n"
         "Menga istalgan video (MP4/MKV) yoki hujjat yuboring.\n"
         "Men uning vizual sifatini yo'qotmagan holda <b>50% - 80% gacha</b> hajmini qisqartirib (siqib) beraman!\n\n"
-        "⚙️ <b>Standart:</b> H.264 CRF-23 + AAC 128k + Web Faststart"
+        "⚙️ <b>Standart:</b> H.264 CRF-24 + AAC 128k + Web Faststart (2GB gacha)"
     )
     await message.reply_text(text)
 
-@app.on_message((filters.video | filters.document) & filters.private)
+@app.on_message(filters.video | filters.document)
 async def handle_video(client: Client, message: Message):
     if not is_admin(message.from_user.id):
         await message.reply_text("⛔️ Ruxsat yo'q!")
@@ -89,15 +85,29 @@ async def handle_video(client: Client, message: Message):
         f"⏳ <b>Video yuklab olinmoqda...</b>\n📁 <code>{orig_name}</code> ({human_size(orig_size)})"
     )
 
-    in_file = os.path.join(TEMP_DIR, f"in_{int(time.time())}_{orig_name}")
-    out_file = os.path.join(TEMP_DIR, f"out_{int(time.time())}_{orig_name}.mp4")
+    clean_base = os.path.splitext(orig_name)[0].replace(" ", "_")
+    ext = os.path.splitext(orig_name)[1] or ".mp4"
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+    in_file = os.path.join(TEMP_DIR, f"in_{clean_base}_{timestamp}{ext}")
+    out_file = os.path.join(TEMP_DIR, f"out_{clean_base}_{timestamp}.mp4")
 
     try:
-        await message.download(file_name=in_file)
-        await status_msg.edit_text("⚙️ <b>FFmpeg orqali sifat saqlangan holda siqilmoqda...</b>\n<i>Bu video uzunligiga qarab 1-3 daqiqa vaqt olishi mumkin.</i>")
+        last_edit = [0]
+        async def progress(current, total):
+            if time.time() - last_edit[0] > 4:
+                last_edit[0] = time.time()
+                pct = round((current / total) * 100, 1) if total > 0 else 0
+                try:
+                    await status_msg.edit_text(f"⏳ <b>Yuklab olinmoqda: {pct}%</b>\n({human_size(current)} / {human_size(total)})")
+                except:
+                    pass
+
+        await message.download(file_name=in_file, progress=progress)
+        await status_msg.edit_text("⚙️ <b>FFmpeg orqali sifat saqlangan holda siqilmoqda...</b>\n<i>Iltimos kuting...</i>")
 
         start_time = time.time()
-        success = await compress_video_ffmpeg(in_file, out_file, crf=23)
+        success = await compress_video_ffmpeg(in_file, out_file, crf=24)
         elapsed = round(time.time() - start_time, 1)
 
         if not success or not os.path.exists(out_file):
@@ -117,10 +127,21 @@ async def handle_video(client: Client, message: Message):
             f"⚡️ Ketgan vaqt: <b>{elapsed}s</b>"
         )
 
+        last_up = [0]
+        async def up_progress(current, total):
+            if time.time() - last_up[0] > 4:
+                last_up[0] = time.time()
+                pct = round((current / total) * 100, 1) if total > 0 else 0
+                try:
+                    await status_msg.edit_text(f"📤 <b>Yuklanmoqda: {pct}%</b>\n({human_size(current)} / {human_size(total)})")
+                except:
+                    pass
+
         await message.reply_video(
             video=out_file,
             caption=caption,
-            supports_streaming=True
+            supports_streaming=True,
+            progress=up_progress
         )
         await status_msg.delete()
 
