@@ -18,7 +18,7 @@ ADMIN_IDS = [5415350162, 6149114216]
 B2_KEY_ID = os.getenv("B2_KEY_ID", "005562e6b2bafd40000000002")
 B2_APP_KEY = os.getenv("B2_APP_KEY", "K005qO8gFPWarHPO4nEZATyOvJcQ6o4")
 B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME", "iskurama")
-B2_BUCKET_ID = os.getenv("B2_BUCKET_ID", "ce45d5be80bb5e9122ff0010")
+B2_BUCKET_ID = os.getenv("B2_BUCKET_ID", "f5c6d20ee6cb124baa0f0d14")
 CDN_BASE_URL = os.getenv("CDN_BASE_URL", "https://cdn.hikaku.uz")
 
 TEMP_DIR = "/tmp/hikaku_b2_upload"

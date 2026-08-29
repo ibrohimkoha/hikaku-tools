@@ -12,7 +12,7 @@ module.exports = {
         B2_KEY_ID: "005562e6b2bafd40000000002",
         B2_APP_KEY: "K005qO8gFPWarHPO4nEZATyOvJcQ6o4",
         B2_BUCKET_NAME: "iskurama",
-        B2_BUCKET_ID: "ce45d5be80bb5e9122ff0010",
+        B2_BUCKET_ID: "f5c6d20ee6cb124baa0f0d14",
         CDN_BASE_URL: "https://cdn.hikaku.uz"
       },
       autorestart: true,
@@ -39,7 +39,11 @@ module.exports = {
       env: {
         TELEGRAM_API_ID: "33864339",
         TELEGRAM_API_HASH: "7a12002bdba42778b2068c88bb64072c",
-        TELEGRAM_SESSION: "hikaku_userbot_session"
+        TELEGRAM_SESSION: "hikaku_userbot_session",
+        B2_KEY_ID: "005562e6b2bafd40000000002",
+        B2_APP_KEY: "K005qO8gFPWarHPO4nEZATyOvJcQ6o4",
+        B2_BUCKET_ID: "f5c6d20ee6cb124baa0f0d14",
+        CDN_BASE_URL: "https://cdn.hikaku.uz"
       },
       autorestart: true,
       max_restarts: 10
@@ -52,7 +56,11 @@ module.exports = {
       env: {
         TELEGRAM_API_ID: "33864339",
         TELEGRAM_API_HASH: "7a12002bdba42778b2068c88bb64072c",
-        TELEGRAM_SESSION: "userbot_2"
+        TELEGRAM_SESSION: "userbot_2",
+        B2_KEY_ID: "005562e6b2bafd40000000002",
+        B2_APP_KEY: "K005qO8gFPWarHPO4nEZATyOvJcQ6o4",
+        B2_BUCKET_ID: "f5c6d20ee6cb124baa0f0d14",
+        CDN_BASE_URL: "https://cdn.hikaku.uz"
       },
       autorestart: true,
       max_restarts: 10
