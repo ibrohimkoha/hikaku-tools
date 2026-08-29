@@ -1,12 +1,12 @@
 import os
 import sys
+import time
 import asyncio
+import hashlib
+import aiohttp
 import logging
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageMediaDocument, DocumentAttributeVideo, DocumentAttributeFilename
-import time
-import hashlib
-import aiohttp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("HikakuGrabber")
@@ -15,55 +15,30 @@ API_ID = int(os.getenv("TELEGRAM_API_ID", "33864339"))
 API_HASH = os.getenv("TELEGRAM_API_HASH", "7a12002bdba42778b2068c88bb64072c")
 SESSION_NAME = os.getenv("TELEGRAM_SESSION", "hikaku_userbot_session")
 
+B2_KEY_ID = os.getenv("B2_KEY_ID", "005562e6b2bafd40000000002")
+B2_APP_KEY = os.getenv("B2_APP_KEY", "K005qO8gFPWarHPO4nEZATyOvJcQ6o4")
+B2_BUCKET_ID = os.getenv("B2_BUCKET_ID", "ce45d5be80bb5e9122ff0010")
+CDN_BASE_URL = os.getenv("CDN_BASE_URL", "https://cdn.hikaku.uz")
+
 TEMP_DIR = "/tmp/hikaku_grabber"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
 
-async def download_and_send_media(event, message, destination="me"):
-    if not message.media:
-        await event.reply("❌ Bu xabarda media (video/fayl) mavjud emas!")
-        return
-
-    status_msg = await event.reply("⏳ <b>Himoyalangan media MTProto orqali sug'urib olinmoqda...</b>", parse_mode="html")
-    
-    file_name = "grabbed_video.mp4"
-    if isinstance(message.media, MessageMediaDocument):
-        for attr in message.media.document.attributes:
-            if isinstance(attr, DocumentAttributeFilename):
-                file_name = attr.file_name
-
-    download_path = os.path.join(TEMP_DIR, file_name)
-
-    try:
-        await client.download_media(message, file=download_path)
-        await status_msg.edit("📤 <b>Saqlangan xabarlaringizga (Saved Messages) yuborilmoqda...</b>", parse_mode="html")
-
-        await client.send_file(
-            destination,
-            file=download_path,
-            caption=f"✅ <b>Sug'urib olingan media:</b> <code>{file_name}</code>\nManba: {getattr(message.chat, 'title', getattr(message.chat, 'username', 'Chat'))}",
-            parse_mode="html",
-            supports_streaming=True
-        )
-        await status_msg.edit("✅ <b>Muvaffaqiyatli saqlandi!</b> (Saved Messages bo'limini tekshiring)", parse_mode="html")
-
-    except Exception as e:
-        logger.error(f"Error grabbing: {e}")
-        await status_msg.edit(f"❌ Xatolik: {e}")
-    finally:
-        if os.path.exists(download_path):
-            try: os.remove(download_path)
-            except: pass
-
 b2_auth_token = None
 b2_api_url = None
 b2_auth_exp = 0
 
-B2_KEY_ID = os.getenv("B2_KEY_ID", "005562e6b2bafd40000000002")
-B2_APP_KEY = os.getenv("B2_APP_KEY", "K005qO8gFPWarHPO4nEZATyOvJcQ6o4")
-B2_BUCKET_ID = os.getenv("B2_BUCKET_ID", "ce45d5be80bb5e9122ff0010")
-CDN_BASE_URL = os.getenv("CDN_BASE_URL", "https://cdn.hikaku.uz")
+def human_size(size_bytes: int) -> str:
+    if size_bytes == 0:
+        return "0B"
+    size_name = ("B", "KB", "MB", "GB", "TB")
+    i = 0
+    p = float(size_bytes)
+    while p >= 1024.0 and i < len(size_name) - 1:
+        p /= 1024.0
+        i += 1
+    return f"{p:.2f} {size_name[i]}"
 
 async def get_b2_auth():
     global b2_auth_token, b2_api_url, b2_auth_exp
@@ -132,6 +107,70 @@ async def delete_file_from_b2(b2_file_name: str) -> int:
                             deleted += 1
     return deleted
 
+@client.on(events.NewMessage(pattern=r"^/(?:upload|b2)(?:\s+(.*))?$", outgoing=True))
+async def handle_upload_direct(event):
+    reply_to = await event.get_reply_message()
+    if not (reply_to and reply_to.media):
+        await event.reply("❌ Iltimos, B2 ga yuklamoqchi bo'lgan videoga javob (reply) qilib <code>/upload</code> deb yozing!", parse_mode="html")
+        return
+
+    status = await event.reply("⏳ <b>1/2: Telegramdan video serverga yuklab olinmoqda (0%)...</b>", parse_mode="html")
+    
+    file_name = "anime_video.mp4"
+    if isinstance(reply_to.media, MessageMediaDocument):
+        for attr in reply_to.media.document.attributes:
+            if isinstance(attr, DocumentAttributeFilename):
+                file_name = attr.file_name
+
+    clean_base = os.path.splitext(file_name)[0].replace(" ", "_")
+    ext = os.path.splitext(file_name)[1] or ".mp4"
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    b2_name = f"videos/{clean_base}_{timestamp}{ext}"
+    local_path = os.path.join(TEMP_DIR, f"{clean_base}_{timestamp}{ext}")
+
+    try:
+        start_t = time.time()
+        last_edit = [0]
+
+        async def dl_progress(current, total):
+            if time.time() - last_edit[0] > 4:
+                last_edit[0] = time.time()
+                pct = round((current / total) * 100, 1) if total > 0 else 0
+                try:
+                    await status.edit(f"⏳ <b>1/2: Telegramdan yuklab olinmoqda: {pct}%</b>\n({human_size(current)} / {human_size(total)})", parse_mode="html")
+                except:
+                    pass
+
+        await client.download_media(reply_to, file=local_path, progress_callback=dl_progress)
+        
+        await status.edit("☁️ <b>2/2: Backblaze B2 bulut omboriga yuklanmoqda...</b>", parse_mode="html")
+        success = await upload_file_to_b2(local_path, b2_name)
+        elapsed = round(time.time() - start_t, 1)
+
+        if not success:
+            await status.edit("❌ Backblaze B2 ga yuklashda xatolik yuz berdi!", parse_mode="html")
+            return
+
+        cdn_url = f"{CDN_BASE_URL}/{b2_name}"
+        file_size_mb = human_size(os.path.getsize(local_path))
+
+        caption = (
+            f"✅ <b>Backblaze B2 ga to'g'ridan-to'g'ri yuklandi!</b>\n\n"
+            f"🔗 <b>CDN Havolasi:</b>\n<code>{cdn_url}</code>\n\n"
+            f"📦 Hajmi: <b>{file_size_mb}</b>\n"
+            f"⚡️ Ketgan vaqt: <b>{elapsed}s</b>\n\n"
+            f"💡 <i>Admin panelga (<a href='https://anime.hikaku.uz/admin'>anime.hikaku.uz/admin</a>) shu havolani qo'yib 1 soniyada saqlashingiz mumkin!</i>"
+        )
+        await status.edit(caption, parse_mode="html", link_preview=False)
+
+    except Exception as e:
+        logger.error(f"Error direct uploading: {e}", exc_info=True)
+        await status.edit(f"❌ Xatolik yuz berdi: {e}", parse_mode="html")
+    finally:
+        if os.path.exists(local_path):
+            try: os.remove(local_path)
+            except: pass
+
 @client.on(events.NewMessage(pattern=r"^/(?:del|remove|delete)(?:\s+(.*))?$", outgoing=True))
 async def handle_delete_b2(event):
     args = event.pattern_match.group(1)
@@ -148,59 +187,6 @@ async def handle_delete_b2(event):
         await status.edit(f"⚠️ <code>{clean_name}</code> fayli B2 omboridan topilmadi yoki allaqachon o'chirilgan.", parse_mode="html")
     else:
         await status.edit(f"✅ <b>Backblaze B2 omboridan butunlay o'chirildi!</b>\n\n📁 Fayl: <code>{clean_name}</code>\n🗑 O'chirilgan versiyalar soni: <b>{count} ta</b>", parse_mode="html")
-
-@client.on(events.NewMessage(pattern=r"^/(?:upload|b2)(?:\s+(.*))?$", outgoing=True))
-async def handle_upload_direct(event):
-    reply_to = await event.get_reply_message()
-    if not (reply_to and reply_to.media):
-        await event.reply("❌ Iltimos, B2 ga yuklamoqchi bo'lgan videoga javob (reply) qilib <code>/upload</code> deb yozing!", parse_mode="html")
-        return
-
-    status = await event.reply("⏳ <b>1/2: Telegramdan video serverga yuklab olinmoqda...</b>", parse_mode="html")
-    
-    file_name = "anime_video.mp4"
-    if isinstance(reply_to.media, MessageMediaDocument):
-        for attr in reply_to.media.document.attributes:
-            if isinstance(attr, DocumentAttributeFilename):
-                file_name = attr.file_name
-
-    clean_base = os.path.splitext(file_name)[0].replace(" ", "_")
-    ext = os.path.splitext(file_name)[1] or ".mp4"
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    b2_name = f"videos/{clean_base}_{timestamp}{ext}"
-    local_path = os.path.join(TEMP_DIR, f"{clean_base}_{timestamp}{ext}")
-
-    try:
-        start_t = time.time()
-        await client.download_media(reply_to, file=local_path)
-        
-        await status.edit("☁️ <b>2/2: Backblaze B2 bulut omboriga yuklanmoqda...</b>", parse_mode="html")
-        success = await upload_file_to_b2(local_path, b2_name)
-        elapsed = round(time.time() - start_t, 1)
-
-        if not success:
-            await status.edit("❌ Backblaze B2 ga yuklashda xatolik yuz berdi!", parse_mode="html")
-            return
-
-        cdn_url = f"{CDN_BASE_URL}/{b2_name}"
-        file_size_mb = round(os.path.getsize(local_path) / (1024 * 1024), 2)
-
-        caption = (
-            f"✅ <b>Backblaze B2 ga to'g'ridan-to'g'ri yuklandi!</b>\n\n"
-            f"🔗 <b>CDN Havolasi:</b>\n<code>{cdn_url}</code>\n\n"
-            f"📦 Hajmi: <b>{file_size_mb} MB</b>\n"
-            f"⚡️ Ketgan vaqt: <b>{elapsed}s</b>\n\n"
-            f"💡 <i>Admin panelga yoki pleerga shu havolani nusxalab qo'yishingiz mumkin!</i>"
-        )
-        await status.edit(caption, parse_mode="html")
-
-    except Exception as e:
-        logger.error(f"Error direct uploading: {e}")
-        await status.edit(f"❌ Xatolik: {e}", parse_mode="html")
-    finally:
-        if os.path.exists(local_path):
-            try: os.remove(local_path)
-            except: pass
 
 @client.on(events.NewMessage(pattern=r"^/grab(?:\s+(.*))?$", outgoing=True))
 async def handle_grab(event):
@@ -239,6 +225,53 @@ async def handle_grab(event):
         "3. B2 dan link orqali o'chirish uchun: <code>/del &lt;cdn_havolasi&gt;</code>",
         parse_mode="html"
     )
+
+async def download_and_send_media(event, message, destination="me"):
+    if not message.media:
+        await event.reply("❌ Bu xabarda media (video/fayl) mavjud emas!")
+        return
+
+    status_msg = await event.reply("⏳ <b>Himoyalangan media MTProto orqali sug'urib olinmoqda (0%)...</b>", parse_mode="html")
+    
+    file_name = "grabbed_video.mp4"
+    if isinstance(message.media, MessageMediaDocument):
+        for attr in message.media.document.attributes:
+            if isinstance(attr, DocumentAttributeFilename):
+                file_name = attr.file_name
+
+    download_path = os.path.join(TEMP_DIR, file_name)
+
+    try:
+        last_edit = [0]
+        async def dl_progress(current, total):
+            if time.time() - last_edit[0] > 4:
+                last_edit[0] = time.time()
+                pct = round((current / total) * 100, 1) if total > 0 else 0
+                try:
+                    await status_msg.edit(f"⏳ <b>Sug'urib olinmoqda: {pct}%</b>\n({human_size(current)} / {human_size(total)})", parse_mode="html")
+                except:
+                    pass
+
+        await client.download_media(message, file=download_path, progress_callback=dl_progress)
+        
+        await status_msg.edit("📤 <b>Saqlangan xabarlaringizga (Saved Messages) yuborilmoqda...</b>", parse_mode="html")
+
+        await client.send_file(
+            destination,
+            file=download_path,
+            caption=f"✅ <b>Sug'urib olingan media:</b> <code>{file_name}</code>\nManba: {getattr(message.chat, 'title', getattr(message.chat, 'username', 'Chat'))}",
+            parse_mode="html",
+            supports_streaming=True
+        )
+        await status_msg.edit("✅ <b>Muvaffaqiyatli saqlandi!</b> (Saved Messages bo'limini tekshiring)", parse_mode="html")
+
+    except Exception as e:
+        logger.error(f"Error grabbing: {e}", exc_info=True)
+        await status_msg.edit(f"❌ Xatolik: {e}")
+    finally:
+        if os.path.exists(download_path):
+            try: os.remove(download_path)
+            except: pass
 
 async def main():
     await client.connect()
