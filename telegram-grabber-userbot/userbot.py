@@ -110,6 +110,45 @@ async def upload_file_to_b2(file_path: str, b2_file_name: str, content_type: str
             async with session.post(upload_url, data=f, headers=up_headers) as resp:
                 return resp.status == 200
 
+async def delete_file_from_b2(b2_file_name: str) -> int:
+    token, api_url = await get_b2_auth()
+    headers = {"Authorization": token}
+    payload = {
+        "bucketId": B2_BUCKET_ID,
+        "startFileName": b2_file_name,
+        "prefix": b2_file_name,
+        "maxFileCount": 10
+    }
+    deleted = 0
+    async with aiohttp.ClientSession() as session:
+        async with session.post(f"{api_url}/b2api/v2/b2_list_file_versions", json=payload, headers=headers) as resp:
+            data = await resp.json()
+            files = data.get("files", [])
+            for f in files:
+                if f["fileName"] == b2_file_name:
+                    del_payload = {"fileId": f["fileId"], "fileName": f["fileName"]}
+                    async with session.post(f"{api_url}/b2api/v2/b2_delete_file_version", json=del_payload, headers=headers) as del_resp:
+                        if del_resp.status == 200:
+                            deleted += 1
+    return deleted
+
+@client.on(events.NewMessage(pattern=r"^/(?:del|remove|delete)(?:\s+(.*))?$", outgoing=True))
+async def handle_delete_b2(event):
+    args = event.pattern_match.group(1)
+    if not args:
+        await event.reply("❌ Iltimos, o'chirilishi kerak bo'lgan havolani yozing:\nMisol: <code>/del https://cdn.hikaku.uz/videos/anime_123.mp4</code>", parse_mode="html")
+        return
+
+    target = args.strip()
+    clean_name = target.replace(CDN_BASE_URL, "").lstrip("/")
+
+    status = await event.reply(f"⏳ <b>Backblaze B2 dan o'chirilmoqda:</b> <code>{clean_name}</code>...", parse_mode="html")
+    count = await delete_file_from_b2(clean_name)
+    if count == 0:
+        await status.edit(f"⚠️ <code>{clean_name}</code> fayli B2 omboridan topilmadi yoki allaqachon o'chirilgan.", parse_mode="html")
+    else:
+        await status.edit(f"✅ <b>Backblaze B2 omboridan butunlay o'chirildi!</b>\n\n📁 Fayl: <code>{clean_name}</code>\n🗑 O'chirilgan versiyalar soni: <b>{count} ta</b>", parse_mode="html")
+
 @client.on(events.NewMessage(pattern=r"^/(?:upload|b2)(?:\s+(.*))?$", outgoing=True))
 async def handle_upload_direct(event):
     reply_to = await event.get_reply_message()
@@ -196,7 +235,8 @@ async def handle_grab(event):
     await event.reply(
         "💡 <b>Qanday ishlatiladi:</b>\n"
         "1. Himoyalangan videoga javob (reply) qilib: <code>/grab</code> (Saved Messagesga saqlash)\n"
-        "2. Yoki to'g'ridan-to'g'ri B2 ga yuklash uchun reply qilib: <code>/upload</code>",
+        "2. To'g'ridan-to'g'ri B2 ga yuklash uchun reply qilib: <code>/upload</code>\n"
+        "3. B2 dan link orqali o'chirish uchun: <code>/del &lt;cdn_havolasi&gt;</code>",
         parse_mode="html"
     )
 
